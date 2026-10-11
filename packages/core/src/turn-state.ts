@@ -1,0 +1,282 @@
+import type { ContentBlock, StopReason } from "./provider";
+import type { Budget, CompactionTrigger, PauseReason, ThreadEventData } from "./thread-events";
+import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step";
+
+// This module folds a Turn's event log into the state the Thread Durable Object runs from. It does no I/O,
+// so the Durable Object only reads rows and a test only needs events. Results, started calls, Approvals and
+// Jobs are kept across re-runs of the same tool Step and dropped when a new model Step starts a new batch.
+// The budget window reopens at an allowed `continue`.
+
+/**
+ * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
+ * last model Step, finish an interrupted compact Step, or end with the last model Step's message. A fresh
+ * compact Step is decided by the Thread Durable Object, never by the log.
+ */
+export type Plan =
+  /** `fresh` is false when the Step was started and not completed, so this is a recovery re-run. */
+  | { kind: "model"; n: number; fresh: boolean }
+  /** `prior` carries what already happened in earlier runs of this batch. */
+  | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls }
+  | { kind: "compact"; n: number; trigger: CompactionTrigger }
+  | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
+
+type LocalRequest =
+  | { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean }
+  | {
+      kind: "connect";
+      id: string;
+      tool: string;
+      serverId: string;
+      authUrl: string;
+      timeoutAt: number;
+      answered: boolean;
+    }
+  | { kind: "continue"; timeoutAt: number; answered: boolean };
+
+/**
+ * One `approval.requested` of the current Step and whether it has been answered. `child` is set when a
+ * Delegation child raised it.
+ */
+export type Request = LocalRequest & { child?: { threadId: string; seq: number } };
+
+type Job = { jobId: string; outcome?: JobOutcome };
+
+/** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
+export interface TurnState {
+  plan: Plan;
+  /** What the Turn has spent since its budget window opened. */
+  budget: Budget;
+  /** Set while the Turn is parked. */
+  paused?: PauseReason;
+  /** Every `approval.requested` of the current Step, by its seq. */
+  requests: Map<number, Request>;
+  /** The current tool Step's Approvals by tool-call id. */
+  approvals: Map<string, CallApproval>;
+  /** The current tool Step's Jobs by tool-call id. */
+  jobs: Map<string, Job>;
+  /** The last completed model Step's content, for a Turn that ends without another one. */
+  lastMessage: ContentBlock[];
+  /** The highest Step number started. */
+  lastStep: number;
+  /** Set when the last completed Step was a compact Step: whether it compacted or was called off. */
+  compaction?: "done" | "skipped";
+}
+
+/** One persisted event with its log position and time. */
+export interface LoggedEvent {
+  seq: number;
+  at: number;
+  event: ThreadEventData;
+}
+
+/**
+ * Folds one Turn's events, given in `seq` order without `message.delta`, into its state. `now` closes an open
+ * stretch of active wall time.
+ */
+export function foldTurn(events: Iterable<LoggedEvent>, now: number): TurnState {
+  const fold = new TurnFold();
+  for (const { seq, at, event } of events) fold.apply(seq, at, event);
+  return fold.state(now);
+}
+
+type EventOf<T extends ThreadEventData["type"]> = Extract<ThreadEventData, { type: T }>;
+
+class TurnFold {
+  private started:
+    { kind: "model" | "tool"; n: number } | { kind: "compact"; n: number; trigger: CompactionTrigger } | undefined;
+  private completed = true;
+  private steered = false;
+  private parts: ContentBlock[] = [];
+  private last: { stopReason: StopReason; message: ContentBlock[] } | undefined;
+  private readonly calls = new Map<string, { seq: number; input: unknown }>();
+  private readonly results = new Set<string>();
+  private readonly requests = new Map<number, Request>();
+  private readonly approvals = new Map<string, CallApproval>();
+  private readonly jobs = new Map<string, Job>();
+  private readonly byJob = new Map<string, string>();
+  private readonly budget: Budget = { steps: 0, wallMs: 0, tokens: 0 };
+  private countedStep = 0;
+  private compacted = false;
+  private compaction: "done" | "skipped" | undefined;
+  /** The Step an overflow compact Step interrupted. A skipped Compaction hands the Turn back to it. */
+  private previous: { started: TurnFold["started"]; completed: boolean } | undefined;
+  /** When the current stretch of active wall time began. Unset while parked. */
+  private activeSince: number | undefined;
+  private paused: PauseReason | undefined;
+
+  apply(seq: number, at: number, event: ThreadEventData): void {
+    switch (event.type) {
+      case "turn.started":
+      case "turn.resumed":
+        // A recovery resumes without a pause before it, so its stretch keeps counting from where it began.
+        this.activeSince ??= at;
+        this.paused = undefined;
+        break;
+      case "turn.paused":
+        if (this.activeSince !== undefined) this.budget.wallMs += at - this.activeSince;
+        this.activeSince = undefined;
+        this.paused = event.reason;
+        break;
+      case "turn.input":
+        this.steered = true;
+        break;
+      case "step.started":
+        this.stepStarted(event);
+        break;
+      case "message.part":
+        this.parts[event.index] = event.block;
+        break;
+      case "tool.call":
+        if (event.parentCallId) break;
+        this.calls.set(event.id, { seq, input: event.input });
+        break;
+      case "tool.result":
+        if (event.parentCallId) break;
+        this.results.add(event.id);
+        break;
+      case "step.completed":
+        this.stepCompleted(event);
+        break;
+      case "thread.compacted":
+        this.compacted = true;
+        break;
+      case "approval.requested":
+        this.approvalRequested(seq, event);
+        break;
+      case "approval.resolved":
+        this.approvalResolved(event);
+        break;
+      case "job.started":
+        this.jobs.set(event.id, { jobId: event.jobId });
+        this.byJob.set(event.jobId, event.id);
+        break;
+      case "job.completed":
+      case "job.failed":
+      case "job.cancelled":
+        this.jobEnded(event);
+        break;
+      default:
+        break;
+    }
+  }
+
+  state(now: number): TurnState {
+    const { budget, requests, approvals, jobs, last } = this;
+    let { started, completed } = this;
+    if (started?.kind === "compact" && started.trigger === "overflow" && this.compaction === "skipped" && this.previous)
+      ({ started, completed } = this.previous);
+    if (this.activeSince !== undefined) budget.wallMs += now - this.activeSince;
+    const prior: PriorCalls = { started: this.calls, finished: this.results, approvals, jobs };
+    const batch = (): ToolCall[] =>
+      (last?.message ?? []).flatMap((block) =>
+        block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : [],
+      );
+    const base = {
+      budget,
+      requests,
+      approvals,
+      jobs,
+      lastMessage: last?.message ?? [],
+      lastStep: this.countedStep,
+      ...(this.paused !== undefined && { paused: this.paused }),
+      ...(this.compaction !== undefined && { compaction: this.compaction }),
+    };
+    const plan = (p: Plan): TurnState => ({ ...base, plan: p });
+    if (started && !completed) {
+      if (started.kind === "model") return plan({ kind: "model", n: started.n, fresh: false });
+      if (started.kind === "compact") return plan({ kind: "compact", n: started.n, trigger: started.trigger });
+      return plan({ kind: "tool", n: started.n, fresh: false, batch: batch(), prior });
+    }
+    // A Compaction is always followed by a fresh model Step, whatever stood before it.
+    if (started?.kind === "compact") return plan({ kind: "model", n: started.n + 1, fresh: true });
+    if (!started || !last) return plan({ kind: "model", n: 1, fresh: true });
+    if (started.kind === "tool" || this.steered) return plan({ kind: "model", n: started.n + 1, fresh: true });
+    const pending = batch();
+    if (pending.length > 0) return plan({ kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior });
+    if (last.stopReason === "pause_turn") return plan({ kind: "model", n: started.n + 1, fresh: true });
+    return plan({ kind: "finish", stopReason: last.stopReason, message: last.message });
+  }
+
+  private stepStarted(event: EventOf<"step.started">): void {
+    // A re-run of the compact Step keeps pointing at the Step it interrupted.
+    if (event.kind === "compact" && this.started?.kind !== "compact")
+      this.previous = { started: this.started, completed: this.completed };
+    this.started =
+      event.kind === "compact"
+        ? { kind: "compact", n: event.n, trigger: event.trigger }
+        : { kind: event.kind, n: event.n };
+    this.completed = false;
+    this.compacted = false;
+    this.compaction = undefined;
+    this.steered = false;
+    this.requests.clear();
+    if (event.n > this.countedStep) {
+      this.countedStep = event.n;
+      this.budget.steps++;
+    }
+    if (event.kind !== "model") return;
+    this.parts = [];
+    this.calls.clear();
+    this.results.clear();
+    this.approvals.clear();
+    this.jobs.clear();
+    this.byJob.clear();
+  }
+
+  private stepCompleted(event: EventOf<"step.completed">): void {
+    this.completed = true;
+    if (event.kind === "compact") this.compaction = this.compacted ? "done" : "skipped";
+    if (event.kind !== "model") return;
+    this.last = { stopReason: event.stopReason, message: this.parts.filter((part) => part !== undefined) };
+    this.budget.tokens += event.usage.input + event.usage.output;
+  }
+
+  private approvalRequested(seq: number, event: EventOf<"approval.requested">): void {
+    if (event.child) {
+      this.requests.set(seq, { ...event, answered: false });
+      return;
+    }
+    if (event.kind === "continue") {
+      this.requests.set(seq, { kind: "continue", timeoutAt: event.timeoutAt, answered: false });
+      return;
+    }
+    const { id, tool, timeoutAt } = event;
+    this.requests.set(
+      seq,
+      event.kind === "tool"
+        ? { kind: "tool", id, tool, timeoutAt, answered: false }
+        : { kind: "connect", id, tool, serverId: event.serverId, authUrl: event.authUrl, timeoutAt, answered: false },
+    );
+    this.approvals.set(
+      id,
+      event.kind === "tool" ? { request: seq, kind: "tool", input: event.input } : { request: seq, kind: "connect" },
+    );
+  }
+
+  private approvalResolved(event: EventOf<"approval.resolved">): void {
+    const request = this.requests.get(event.request);
+    if (!request) return;
+    request.answered = true;
+    if (request.child) return;
+    if (request.kind !== "continue") {
+      const approval = this.approvals.get(request.id);
+      if (approval)
+        approval.answer = {
+          decision: event.decision,
+          ...(event.reason !== undefined && { reason: event.reason }),
+          source: event.source,
+        };
+    } else if (event.decision === "allow") {
+      this.requests.delete(event.request);
+      this.budget.steps = 0;
+      this.budget.tokens = 0;
+      this.budget.wallMs = 0;
+    }
+  }
+
+  private jobEnded(event: EventOf<"job.completed" | "job.failed" | "job.cancelled">): void {
+    const id = this.byJob.get(event.jobId);
+    const job = id === undefined ? undefined : this.jobs.get(id);
+    if (job) job.outcome = event;
+  }
+}

@@ -1,0 +1,55 @@
+import { defineFragment, type Fragment, type FragmentRender } from "./fragment";
+import { assertName } from "./names";
+import type { Schema } from "./schema";
+import type { Tool } from "./tool";
+
+/** The definition `defineSkill` takes. */
+export interface SkillInput<Settings extends Schema | undefined> {
+  name: string;
+  /**
+   * The text the model always sees, so it can tell when to activate the Skill. The body is not shown until
+   * then.
+   */
+  description: string;
+  /** The instructions that enter the model's context when the Skill is invoked. */
+  body: Fragment | FragmentRender<undefined>;
+  /** Tools the model can call only while the Skill is active. */
+  tools?: Tool[];
+  /**
+   * Who may activate it: the model through `use_skill`, a User command on a Turn input, or both (the default).
+   */
+  invokableBy?: SkillInvoker;
+  /** The schema of the per-reference `settings` an Agent Spec may pass. */
+  settings?: Settings;
+}
+
+/** Who may activate a Skill. */
+export const SKILL_INVOKERS = ["model", "user", "both"] as const;
+/** One of `SKILL_INVOKERS`. */
+export type SkillInvoker = (typeof SKILL_INVOKERS)[number];
+
+/** A Skill as `defineSkill` returns it, with the body as a Fragment and `invokableBy` defaulted to `both`. */
+export interface Skill<Settings extends Schema | undefined = Schema | undefined> {
+  readonly kind: "skill";
+  readonly name: string;
+  readonly description: string;
+  readonly body: Fragment;
+  readonly tools: readonly Tool[];
+  readonly invokableBy: SkillInvoker;
+  readonly settings?: Settings;
+}
+
+/** Defines a Skill for the Catalogue. A bare render function becomes a Fragment named after the Skill. */
+export function defineSkill<Settings extends Schema | undefined = undefined>(
+  input: SkillInput<Settings>,
+): Skill<Settings> {
+  assertName("skill", input.name);
+  const body = typeof input.body === "function" ? defineFragment({ name: input.name, render: input.body }) : input.body;
+  return Object.freeze({
+    kind: "skill",
+    ...input,
+    body,
+    tools: Object.freeze([...(input.tools ?? [])]),
+    invokableBy: input.invokableBy ?? "both",
+  });
+}

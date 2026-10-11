@@ -1,0 +1,648 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`committed migrations > migrates an empty Knowledge database exactly once > Knowledge sqlite_master 1`] = `
+[
+  {
+    "name": "chunks_doc_seq_unique",
+    "sql": "CREATE UNIQUE INDEX \`chunks_doc_seq_unique\` ON \`chunks\` (\`doc\`,\`seq\`)",
+    "type": "index",
+  },
+  {
+    "name": "ingest_pending",
+    "sql": "CREATE INDEX \`ingest_pending\` ON \`ingest_jobs\` (\`notified\`) WHERE "ingest_jobs"."notified" = 0",
+    "type": "index",
+  },
+  {
+    "name": "vector_ids_doc",
+    "sql": "CREATE INDEX \`vector_ids_doc\` ON \`vector_ids\` (\`doc\`)",
+    "type": "index",
+  },
+  {
+    "name": "vectors_corpus",
+    "sql": "CREATE INDEX \`vectors_corpus\` ON \`vectors\` (\`ns\`,\`knowledge\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "chunks",
+    "sql": "CREATE TABLE \`chunks\` (
+	\`id\` integer PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL,
+	\`text\` text NOT NULL,
+	\`meta\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts",
+    "sql": "CREATE VIRTUAL TABLE \`chunks_fts\` USING fts5(text, content='chunks', content_rowid='id')",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_config",
+    "sql": "CREATE TABLE 'chunks_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_data",
+    "sql": "CREATE TABLE 'chunks_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_docsize",
+    "sql": "CREATE TABLE 'chunks_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_idx",
+    "sql": "CREATE TABLE 'chunks_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "documents",
+    "sql": "CREATE TABLE \`documents\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`text\` text NOT NULL,
+	\`meta\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "ingest_documents",
+    "sql": "CREATE TABLE \`ingest_documents\` (
+	\`job\` text NOT NULL,
+	\`seq\` integer NOT NULL,
+	\`document\` text NOT NULL,
+	PRIMARY KEY(\`job\`, \`seq\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "ingest_jobs",
+    "sql": "CREATE TABLE \`ingest_jobs\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`request\` text NOT NULL,
+	\`completed\` integer DEFAULT 0 NOT NULL,
+	\`total\` integer NOT NULL,
+	\`notified\` integer DEFAULT false NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "knowledge_head",
+    "sql": "CREATE TABLE \`knowledge_head\` (
+	\`scope\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`options\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vector_ids",
+    "sql": "CREATE TABLE \`vector_ids\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vectors",
+    "sql": "CREATE TABLE \`vectors\` (
+	\`ns\` text NOT NULL,
+	\`id\` text NOT NULL,
+	\`knowledge\` text NOT NULL,
+	\`doc\` text NOT NULL,
+	\`values_blob\` blob NOT NULL,
+	PRIMARY KEY(\`ns\`, \`id\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_delete",
+    "sql": "CREATE TRIGGER \`chunks_delete\` AFTER DELETE ON \`chunks\` BEGIN
+  INSERT INTO \`chunks_fts\`(\`chunks_fts\`, rowid, text) VALUES ('delete', old.id, old.text);
+END",
+    "type": "trigger",
+  },
+  {
+    "name": "chunks_insert",
+    "sql": "CREATE TRIGGER \`chunks_insert\` AFTER INSERT ON \`chunks\` BEGIN
+  INSERT INTO \`chunks_fts\`(rowid, text) VALUES (new.id, new.text);
+END",
+    "type": "trigger",
+  },
+]
+`;
+
+exports[`committed migrations > migrates an empty Memory database exactly once > Memory sqlite_master 1`] = `
+[
+  {
+    "name": "vector_ids_doc",
+    "sql": "CREATE INDEX \`vector_ids_doc\` ON \`vector_ids\` (\`doc\`)",
+    "type": "index",
+  },
+  {
+    "name": "vectors_corpus",
+    "sql": "CREATE INDEX \`vectors_corpus\` ON \`vectors\` (\`ns\`,\`knowledge\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "memory_head",
+    "sql": "CREATE TABLE \`memory_head\` (
+	\`scope_id\` text NOT NULL,
+	\`user_id\` text NOT NULL,
+	\`profile_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "notes",
+    "sql": "CREATE VIRTUAL TABLE \`notes\` USING fts5(text, agent_id UNINDEXED, created_at UNINDEXED)",
+    "type": "table",
+  },
+  {
+    "name": "notes_config",
+    "sql": "CREATE TABLE 'notes_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "notes_content",
+    "sql": "CREATE TABLE 'notes_content'(id INTEGER PRIMARY KEY, c0, c1, c2)",
+    "type": "table",
+  },
+  {
+    "name": "notes_data",
+    "sql": "CREATE TABLE 'notes_data'(id INTEGER PRIMARY KEY, block BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "notes_docsize",
+    "sql": "CREATE TABLE 'notes_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "notes_idx",
+    "sql": "CREATE TABLE 'notes_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "vector_ids",
+    "sql": "CREATE TABLE \`vector_ids\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vectors",
+    "sql": "CREATE TABLE \`vectors\` (
+	\`ns\` text NOT NULL,
+	\`id\` text NOT NULL,
+	\`knowledge\` text NOT NULL,
+	\`doc\` text NOT NULL,
+	\`values_blob\` blob NOT NULL,
+	PRIMARY KEY(\`ns\`, \`id\`)
+)",
+    "type": "table",
+  },
+]
+`;
+
+exports[`committed migrations > migrates an empty Scope config database exactly once > Scope config sqlite_master 1`] = `
+[
+  {
+    "name": "alarms_due",
+    "sql": "CREATE INDEX \`alarms_due\` ON \`alarms\` (\`dueAt\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "thread_parents_by_parent",
+    "sql": "CREATE INDEX \`thread_parents_by_parent\` ON \`thread_parents\` (\`thread_key\`)",
+    "type": "index",
+  },
+  {
+    "name": "threads_by_agent_user",
+    "sql": "CREATE INDEX \`threads_by_agent_user\` ON \`threads\` (\`agent_id\`,\`user_id\`,\`last_active_at\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "agent_heads",
+    "sql": "CREATE TABLE \`agent_heads\` (
+	\`agent_id\` text PRIMARY KEY NOT NULL,
+	\`current_version\` integer NOT NULL,
+	\`deleted_at\` integer
+)",
+    "type": "table",
+  },
+  {
+    "name": "agent_specs",
+    "sql": "CREATE TABLE \`agent_specs\` (
+	\`agent_id\` text NOT NULL,
+	\`version\` integer NOT NULL,
+	\`spec_json\` text NOT NULL,
+	\`catalogue_fingerprint\` text NOT NULL,
+	\`created_at\` integer NOT NULL,
+	PRIMARY KEY(\`agent_id\`, \`version\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "alarms",
+    "sql": "CREATE TABLE \`alarms\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`kind\` text NOT NULL,
+	\`dueAt\` integer NOT NULL,
+	\`payload\` text NOT NULL,
+	\`attempt\` integer NOT NULL,
+	\`generation\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "connections",
+    "sql": "CREATE TABLE \`connections\` (
+	\`agent_id\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`value_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`agent_id\`, \`name\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "container_leases",
+    "sql": "CREATE TABLE \`container_leases\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "destroy_operations",
+    "sql": "CREATE TABLE \`destroy_operations\` (
+	\`operation_id\` text PRIMARY KEY NOT NULL,
+	\`state\` text NOT NULL,
+	\`started_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	\`cursor_json\` text
+)",
+    "type": "table",
+  },
+  {
+    "name": "knowledge_names",
+    "sql": "CREATE TABLE \`knowledge_names\` (
+	\`name\` text PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_catalog",
+    "sql": "CREATE TABLE \`mcp_catalog\` (
+	\`server_id\` text NOT NULL,
+	\`partition\` text NOT NULL,
+	\`catalog_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`server_id\`, \`partition\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_clients",
+    "sql": "CREATE TABLE \`mcp_clients\` (
+	\`issuer\` text PRIMARY KEY NOT NULL,
+	\`client_id\` text NOT NULL,
+	\`secret_ref\` text,
+	\`info_json\` text NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_grants",
+    "sql": "CREATE TABLE \`mcp_grants\` (
+	\`server_id\` text NOT NULL,
+	\`holder\` text NOT NULL,
+	\`issuer\` text NOT NULL,
+	\`access_token\` text NOT NULL,
+	\`refresh_token\` text,
+	\`expires_at\` integer,
+	\`scope\` text,
+	\`discovery_json\` text,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`server_id\`, \`holder\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_oauth_state",
+    "sql": "CREATE TABLE \`mcp_oauth_state\` (
+	\`nonce\` text PRIMARY KEY NOT NULL,
+	\`server_id\` text NOT NULL,
+	\`holder\` text NOT NULL,
+	\`user_id\` text,
+	\`thread_json\` text,
+	\`return_to\` text,
+	\`verifier\` text,
+	\`discovery_json\` text,
+	\`expires_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "memory_users",
+    "sql": "CREATE TABLE \`memory_users\` (
+	\`user_id\` text PRIMARY KEY NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "provider_credentials",
+    "sql": "CREATE TABLE \`provider_credentials\` (
+	\`name\` text PRIMARY KEY NOT NULL,
+	\`version\` integer NOT NULL,
+	\`kek\` text,
+	\`dek\` text,
+	\`ciphertext\` text,
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	\`revoked_at\` integer
+)",
+    "type": "table",
+  },
+  {
+    "name": "scope_head",
+    "sql": "CREATE TABLE \`scope_head\` (
+	\`scope_id\` text PRIMARY KEY NOT NULL,
+	\`state\` text NOT NULL,
+	\`current_revision\` integer NOT NULL,
+	\`destroy_operation_id\` text,
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "scope_revisions",
+    "sql": "CREATE TABLE \`scope_revisions\` (
+	\`revision\` integer PRIMARY KEY NOT NULL,
+	\`config_json\` text NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "thread_parents",
+    "sql": "CREATE TABLE \`thread_parents\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL,
+	\`thread_key\` text NOT NULL,
+	\`call_id\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "threads",
+    "sql": "CREATE TABLE \`threads\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL,
+	\`agent_id\` text NOT NULL,
+	\`user_id\` text,
+	\`created_at\` integer NOT NULL,
+	\`last_active_at\` integer NOT NULL,
+	\`title\` text
+)",
+    "type": "table",
+  },
+  {
+    "name": "user_connections",
+    "sql": "CREATE TABLE \`user_connections\` (
+	\`user_id\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`value_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`user_id\`, \`name\`)
+)",
+    "type": "table",
+  },
+]
+`;
+
+exports[`committed migrations > migrates an empty Thread database exactly once > Thread sqlite_master 1`] = `
+[
+  {
+    "name": "alarms_due",
+    "sql": "CREATE INDEX \`alarms_due\` ON \`alarms\` (\`dueAt\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "delegation_children_by_turn",
+    "sql": "CREATE INDEX \`delegation_children_by_turn\` ON \`delegation_children\` (\`turn\`)",
+    "type": "index",
+  },
+  {
+    "name": "delegation_children_outstanding",
+    "sql": "CREATE INDEX \`delegation_children_outstanding\` ON \`delegation_children\` (\`released\`) WHERE "delegation_children"."released" = 0",
+    "type": "index",
+  },
+  {
+    "name": "delegation_reservations_by_turn",
+    "sql": "CREATE INDEX \`delegation_reservations_by_turn\` ON \`delegation_reservations\` (\`turn\`)",
+    "type": "index",
+  },
+  {
+    "name": "deliveries_turn",
+    "sql": "CREATE INDEX \`deliveries_turn\` ON \`deliveries\` (\`turn\`,\`to_seq\`)",
+    "type": "index",
+  },
+  {
+    "name": "events_turn_seq",
+    "sql": "CREATE INDEX \`events_turn_seq\` ON \`events\` (\`turn\`,\`seq\`)",
+    "type": "index",
+  },
+  {
+    "name": "provider_tool_calls",
+    "sql": "CREATE INDEX \`provider_tool_calls\` ON \`events\` (\`turn\`) WHERE "events"."type" = 'server_tool.called'",
+    "type": "index",
+  },
+  {
+    "name": "schedules_next",
+    "sql": "CREATE INDEX \`schedules_next\` ON \`schedules\` (\`next_at\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "alarms",
+    "sql": "CREATE TABLE \`alarms\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`kind\` text NOT NULL,
+	\`dueAt\` integer NOT NULL,
+	\`payload\` text NOT NULL,
+	\`attempt\` integer NOT NULL,
+	\`generation\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "container_run",
+    "sql": "CREATE TABLE \`container_run\` (
+	\`id\` integer PRIMARY KEY NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "container_workspace",
+    "sql": "CREATE TABLE \`container_workspace\` (
+	\`id\` integer PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "delegation_children",
+    "sql": "CREATE TABLE \`delegation_children\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`released\` integer NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "delegation_origin",
+    "sql": "CREATE TABLE \`delegation_origin\` (
+	\`id\` integer PRIMARY KEY NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "delegation_reservations",
+    "sql": "CREATE TABLE \`delegation_reservations\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`active\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "deleted",
+    "sql": "CREATE TABLE \`deleted\` (
+	\`id\` integer PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "deliveries",
+    "sql": "CREATE TABLE \`deliveries\` (
+	\`to_seq\` integer PRIMARY KEY NOT NULL,
+	\`from_seq\` integer NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`binding_json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "delivery_route",
+    "sql": "CREATE TABLE \`delivery_route\` (
+	\`id\` integer PRIMARY KEY NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "events",
+    "sql": "CREATE TABLE \`events\` (
+	\`seq\` integer PRIMARY KEY NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`at\` integer NOT NULL,
+	\`type\` text NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "inputs",
+    "sql": "CREATE TABLE \`inputs\` (
+	\`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`json\` text NOT NULL,
+	\`steer\` integer DEFAULT false NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "schedules",
+    "sql": "CREATE TABLE \`schedules\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`next_at\` integer NOT NULL,
+	\`json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "thread",
+    "sql": "CREATE TABLE \`thread\` (
+	\`scope_id\` text NOT NULL,
+	\`agent_id\` text NOT NULL,
+	\`user_id\` text,
+	\`thread_id\` text NOT NULL,
+	\`created_at\` integer NOT NULL,
+	\`state\` text NOT NULL,
+	\`turn\` integer NOT NULL,
+	\`step\` integer NOT NULL,
+	\`attempt\` integer NOT NULL,
+	\`recoveries\` integer NOT NULL,
+	\`platform_failure\` integer DEFAULT false NOT NULL,
+	\`cancelled\` integer DEFAULT false NOT NULL,
+	\`agent_version\` integer,
+	\`snapshot_json\` text,
+	\`fallback_json\` text,
+	\`usage_json\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "usage_outbox",
+    "sql": "CREATE TABLE \`usage_outbox\` (
+	\`seq\` integer PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+]
+`;

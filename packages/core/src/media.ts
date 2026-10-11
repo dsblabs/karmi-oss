@@ -1,0 +1,213 @@
+import { fileTypeFromBuffer } from "file-type";
+import { ulid } from "ulid";
+import type { MediaRef } from "./context";
+import { KarmiError } from "./errors";
+import { keys, threadMayRead } from "./keys";
+import type { ScopeConfigDocument } from "./scope-config";
+
+/** The forms in which bytes can be handed to `put`. */
+export type MediaBody = ReadableStream<Uint8Array> | ArrayBuffer | string;
+/** What a caller may say about the bytes it stores. */
+export interface MediaOptions {
+  /** The MIME type to record when the bytes cannot be sniffed. A sniffed type wins over the claim. */
+  mimeType?: string;
+  /** A display name kept on the MediaRef. */
+  name?: string;
+}
+/** Stores bytes under the current Thread and returns the MediaRef that points at them. */
+export interface MediaWriter {
+  put(body: MediaBody, options?: MediaOptions): Promise<MediaRef>;
+}
+/**
+ * The media seam of a Thread handle. A `MediaRef` becomes the Thread's to keep once a Turn input carrying it
+ * is accepted, so this is the `MediaWriter` a caller uploading a Turn input holds: it can also delete an
+ * upload it decides to abandon before sending it.
+ */
+export interface ThreadUploads extends MediaWriter {
+  /**
+   * Removes the media this Thread minted for `ref`, and succeeds when the object is already gone. It reaches
+   * nothing outside this Thread, so a ref another Thread minted is left intact. Throws `thread.deleted` for a
+   * deleted Thread and `media.id.invalid` for a ref whose `id` is not one karmi minted.
+   */
+  delete(ref: MediaRef): Promise<void>;
+}
+/** The size limit of one media object when the Scope sets none, in bytes. */
+export const DEFAULT_MEDIA_BYTES = 100 * 1024 * 1024;
+/** The size of one part of a multipart upload, which is also the largest buffer held in memory. */
+const PART_BYTES = 5 * 1024 * 1024;
+
+interface MediaOwner {
+  bucket: R2Bucket | undefined;
+  scope: string;
+  threadId: string;
+  limits?: ScopeConfigDocument["media"];
+  signal?: AbortSignal;
+}
+
+/**
+ * Stores `body` in R2 under the Thread and returns its MediaRef with the MIME type sniffed and the
+ * size measured. It throws `media.tooLarge` or `media.typeDenied` when the Scope's limits reject it.
+ * Memory is bounded by one part-sized buffer regardless of how the input is chunked.
+ */
+export async function putMedia(
+  { bucket, scope, threadId, limits = {}, signal }: MediaOwner,
+  body: MediaBody,
+  options: MediaOptions = {},
+): Promise<MediaRef> {
+  if (!bucket) throw new KarmiError("bindings.missing", "Media requires KARMI_MEDIA.");
+  const id = ulid();
+  const key = keys.media(scope, threadId, id);
+  const reader = toStream(body).getReader();
+  let buffer = new Uint8Array(Math.min(64 * 1024, limits.maxBytes ?? DEFAULT_MEDIA_BYTES));
+  let filled = 0;
+  let bytes = 0;
+  let mimeType = "";
+  let upload: R2MultipartUpload | undefined;
+  const parts: R2UploadedPart[] = [];
+  const flush = async (last: boolean) => {
+    if (!mimeType) mimeType = await sniff(buffer.subarray(0, filled), options.mimeType);
+    assertMediaType(mimeType, limits.allowedTypes);
+    if (last && !upload) {
+      await bucket.put(key, buffer.slice(0, filled), { httpMetadata: { contentType: mimeType } });
+    } else {
+      upload ??= await bucket.createMultipartUpload(key, { httpMetadata: { contentType: mimeType } });
+      if (filled) parts.push(await upload.uploadPart(parts.length + 1, buffer.slice(0, filled)));
+      if (last) await upload.complete(parts);
+    }
+    filled = 0;
+  };
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const next = await reader.read();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      assertMediaSize(bytes, limits.maxBytes);
+      for (let offset = 0; offset < next.value.length;) {
+        if (filled === buffer.length && filled < PART_BYTES) buffer = grow(buffer);
+        const count = Math.min(buffer.length - filled, next.value.length - offset);
+        buffer.set(next.value.subarray(offset, offset + count), filled);
+        filled += count;
+        offset += count;
+        if (filled === PART_BYTES) await flush(false);
+      }
+    }
+    signal?.throwIfAborted();
+    await flush(true);
+    if (signal?.aborted) {
+      await bucket.delete(key);
+      signal.throwIfAborted();
+    }
+    return { id, key, mimeType, bytes, ...(options.name !== undefined && { name: options.name }) };
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    await upload?.abort().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function toStream(body: MediaBody): ReadableStream<Uint8Array> {
+  if (body instanceof ReadableStream) return body;
+  const bytes = typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body);
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+async function sniff(bytes: Uint8Array, claim?: string): Promise<string> {
+  try {
+    const type = await fileTypeFromBuffer(bytes);
+    if (type) return type.mime;
+  } catch {
+    /* A short header can still use the caller's claim. */
+  }
+  return claim?.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
+}
+/** Whether the MIME type `mime` matches `pattern`, which may be exact, `type/*` or `*\/*`. */
+export function matchesType(pattern: string, mime: string): boolean {
+  return pattern === mime || pattern === "*/*" || pattern === `${mime.split("/")[0]}/*`;
+}
+
+/**
+ * A `MediaWriter` extended with `get`, which reads the bytes a MediaRef points at. `get` returns undefined when
+ * Thread `threadId` may not read the ref, the object is gone, or its size or type no longer match the ref. A
+ * Thread reads its own objects and those of its Delegation parents and children, never another Thread's.
+ */
+export function mediaAccess(bucket: R2Bucket | undefined, scope: string, threadId: string, writer: MediaWriter) {
+  return {
+    ...writer,
+    async get(ref: MediaRef): Promise<ArrayBuffer | undefined> {
+      if (!bucket || !threadMayRead(ref.key, scope, threadId)) return undefined;
+      const object = await bucket.get(ref.key);
+      if (!object) return undefined;
+      if (object.size !== ref.bytes || object.httpMetadata?.contentType !== ref.mimeType) {
+        await object.body.cancel();
+        return undefined;
+      }
+      return object.arrayBuffer();
+    },
+  };
+}
+
+/** One R2 object to copy, as its source key and its target key. */
+export type ObjectCopy = [from: string, to: string];
+
+// Each copy holds a read and a write open at once, and a Durable Object has six outbound connections.
+const COPY_CONCURRENCY = 3;
+
+/**
+ * Copies each `[from, to]` pair of R2 keys with its content type, a few at a time, streaming the bytes. A source
+ * object already gone is skipped. It resolves once every copy has landed, and on a failure it starts no further
+ * copy and rejects with the first error once the copies in flight have settled. It never deletes anything.
+ */
+export async function copyObjects(bucket: R2Bucket, copies: readonly ObjectCopy[]): Promise<void> {
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    for (let copy = copies[next++]; copy && !failed; copy = copies[next++]) {
+      const object = await bucket.get(copy[0]);
+      if (!object) continue;
+      // R2 accepts a streamed body only when its length is known up front. A failed write aborts the pipe so
+      // the read is not left open.
+      const { readable, writable } = new FixedLengthStream(object.size);
+      const pipe = new AbortController();
+      try {
+        await Promise.all([
+          bucket.put(copy[1], readable, { httpMetadata: object.httpMetadata ?? {} }),
+          object.body.pipeTo(writable, { signal: pipe.signal }),
+        ]);
+      } catch (error) {
+        pipe.abort(error);
+        throw error;
+      }
+    }
+  };
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.min(COPY_CONCURRENCY, copies.length) }, () =>
+      worker().catch((error: unknown) => {
+        failed = true;
+        throw error;
+      }),
+    ),
+  );
+  const failure = settled.find((result) => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+
+function assertMediaType(mimeType: string, allowedTypes?: string[]): void {
+  if (allowedTypes && !allowedTypes.some((type) => matchesType(type, mimeType)))
+    throw new KarmiError("media.typeDenied", `Media type ${mimeType} is not allowed.`);
+}
+function assertMediaSize(bytes: number, maxBytes = DEFAULT_MEDIA_BYTES): void {
+  if (bytes > maxBytes) throw new KarmiError("media.tooLarge", "Media exceeds the maximum upload size.");
+}
+
+function grow(buffer: Uint8Array): Uint8Array<ArrayBuffer> {
+  const larger = new Uint8Array(Math.min(buffer.length * 2, PART_BYTES));
+  larger.set(buffer);
+  return larger;
+}

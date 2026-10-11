@@ -1,0 +1,174 @@
+import type { ContentBlock, Message } from "./provider";
+
+// The cross-provider replay rules, ported from pi-ai's transformMessages. The Harness runs them before
+// any adapter sees the transcript. Every rule is keyed on the provider and model each assistant message
+// records.
+
+/** The provider and model the transcript is being prepared for. */
+export interface ReplayTarget {
+  /** The Provider profile name. */
+  provider: string;
+  /** The provider-native model id. */
+  model: string;
+}
+
+/** A transcript prepared for one model call. */
+export interface ReplayResult {
+  /** The leading system messages joined together. The caller appends them to the Prompt. */
+  system?: string;
+  /** The messages to send, in order. */
+  messages: Message[];
+}
+
+// Anthropic's tool-call id format is the strictest of the providers, so it is the common form.
+const TOOL_CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ORPHAN_RESULT: ContentBlock[] = [{ type: "text", text: "No result provided" }];
+
+/**
+ * Prepares a persisted transcript for one model call: drops failed assistant turns, keeps
+ * provider-opaque blocks (thinking signatures, server-tool results, compaction, `provider`) only for
+ * the model or provider that produced them, normalises tool-call ids, repairs orphaned tool calls,
+ * and places system messages where every provider accepts them.
+ */
+export function prepareMessages(messages: Message[], target: ReplayTarget): ReplayResult {
+  const idMap = new Map<string, string>();
+  const out: Message[] = [];
+  const leadingSystem: string[] = [];
+
+  // System text seen inside a tool batch is held back until every call of the batch has a result.
+  let pending: { id: string; name: string }[] = [];
+  let answered = new Set<string>();
+  let deferredSystem: string[] = [];
+
+  const closeBatch = (): void => {
+    out.push(...orphanResults(pending, answered));
+    pending = [];
+    answered = new Set();
+    if (deferredSystem.length > 0) {
+      out.push({ role: "system", content: deferredSystem.join("\n\n") });
+      deferredSystem = [];
+    }
+  };
+
+  for (const message of messages) {
+    switch (message.role) {
+      case "system": {
+        if (out.length === 0) leadingSystem.push(message.content);
+        else if (pending.length > 0) deferredSystem.push(message.content);
+        else pushSystem(out, message.content);
+        break;
+      }
+      case "user": {
+        closeBatch();
+        out.push(message);
+        break;
+      }
+      case "toolResult": {
+        const id = idMap.get(message.toolCallId) ?? message.toolCallId;
+        // A result whose call was dropped with a failed assistant turn has nothing to answer.
+        if (!pending.some((call) => call.id === id)) break;
+        answered.add(id);
+        out.push(id === message.toolCallId ? message : { ...message, toolCallId: id });
+        break;
+      }
+      case "assistant": {
+        closeBatch();
+        if (message.stopReason === "error" || message.stopReason === "aborted") break;
+        const sameModel = message.provider === target.provider && message.model === target.model;
+        const sameProvider = message.provider === target.provider;
+        const content = message.content.flatMap((block) => replayBlock(block, sameModel, sameProvider, idMap));
+        for (const block of content) if (block.type === "tool_call") pending.push({ id: block.id, name: block.name });
+        out.push({ ...message, content });
+        break;
+      }
+    }
+  }
+  closeBatch();
+
+  const result: ReplayResult = { messages: out };
+  if (leadingSystem.length > 0) result.system = leadingSystem.join("\n\n");
+  return result;
+}
+
+/**
+ * An error result for every call of the batch that never got one. No provider accepts a call without a result.
+ */
+function orphanResults(pending: { id: string; name: string }[], answered: ReadonlySet<string>): Message[] {
+  return pending
+    .filter((call) => !answered.has(call.id))
+    .map((call) => ({
+      role: "toolResult",
+      toolCallId: call.id,
+      toolName: call.name,
+      content: ORPHAN_RESULT,
+      isError: true,
+    }));
+}
+
+/**
+ * Appends a system message, merging it into a directly preceding one because some providers reject two in a
+ * row.
+ */
+function pushSystem(out: Message[], content: string): void {
+  const last = out[out.length - 1];
+  if (last?.role === "system") out[out.length - 1] = { role: "system", content: `${last.content}\n\n${content}` };
+  else out.push({ role: "system", content });
+}
+
+function replayBlock(
+  block: ContentBlock,
+  sameModel: boolean,
+  sameProvider: boolean,
+  idMap: Map<string, string>,
+): ContentBlock[] {
+  const providerScoped = block.type === "compaction" || block.type === "server_tool" || block.type === "provider";
+  if (!(providerScoped ? sameProvider : sameModel) && block.providerMetadata) {
+    const { providerMetadata, ...rest } = block;
+    block = rest;
+  }
+  switch (block.type) {
+    case "thinking": {
+      if (sameModel) return block.redacted || block.signature || block.text.trim() ? [block] : [];
+      return block.redacted || !block.text.trim() ? [] : [{ type: "text", text: block.text }];
+    }
+    case "tool_call": {
+      const id = normalizeToolCallId(block.id);
+      if (id !== block.id) idMap.set(block.id, id);
+      if (id === block.id && (sameModel || !block.signature)) return [block];
+      const { signature, ...rest } = block;
+      return [sameModel && signature ? { ...rest, id, signature } : { ...rest, id }];
+    }
+    case "server_tool":
+      return sameProvider ? [block] : block.result ? [{ type: "text", text: block.result.summary }] : [];
+    case "compaction":
+      return sameProvider && block.raw ? [block] : [{ type: "text", text: block.summary }];
+    case "provider":
+      return sameProvider ? [block] : [];
+    default:
+      return [block];
+  }
+}
+
+/**
+ * A tool-call id every provider accepts. Ids from other providers can be hundreds of characters and
+ * contain `|` and the like. Long ids are truncated with a hash suffix so they stay unique.
+ */
+export function normalizeToolCallId(id: string): string {
+  if (TOOL_CALL_ID.test(id)) return id;
+  const safe = id.replace(/[^A-Za-z0-9_-]/g, "_") || "call";
+  return safe.length <= 64 ? safe : `${safe.slice(0, 55)}_${fnv1a(id)}`;
+}
+
+function fnv1a(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/** The replay identity of an adapter, including the model vendor when the AI SDK serves several vendors. */
+export function providerReplayKey(adapter: string, model: string): string {
+  return adapter === "ai-sdk" ? `${adapter}:${model.split("/")[0]}` : adapter;
+}

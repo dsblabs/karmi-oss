@@ -1,0 +1,280 @@
+export { defineDeliverer, type Deliverer, type DelivererContext, type DeliveryBinding } from "./deliverer";
+export { defineUsageHandler, usageKey, type UsageHandler, type UsageRecord, type UsageAttribution } from "./usage";
+export { consoleLogger, bindLogger, redactFields } from "./logger";
+export type { QueueMessage } from "./queue";
+export { wallClock, type Clock } from "./clock";
+export {
+  defineAgent,
+  type Agent,
+  type AgentSpec,
+  type PromptEntry,
+  type ToolReference,
+  type SkillReference,
+  type KnowledgeReference,
+  type PolicyRule,
+  type ConnectionDeclaration,
+  type Capabilities,
+  type ProviderToolName,
+  type MemoryProfileSchema,
+  type MemoryProfileProperty,
+  type ContextConfig,
+} from "./agent";
+export {
+  AgentSpecSchema,
+  agentSpecJsonSchema,
+  AGENT_SPEC_DEFAULTS,
+  PROVIDER_TOOL_NAMES,
+  type NormalizedAgentSpec,
+} from "./agent-spec";
+export {
+  ScopeConfigSchema,
+  scopeConfigJsonSchema,
+  parseScopeConfig,
+  resolveScopeConfig,
+  type ScopeConfigDocument,
+  type McpServerConfig,
+  type McpAuthConfig,
+  type EgressConfig,
+  type ProviderConfig,
+  type ProfileFallback,
+  type GatewayConfig,
+  type Ceilings,
+} from "./scope-config";
+export {
+  SensitiveValue,
+  sensitive,
+  isSensitiveValue,
+  redact,
+  parseCredentialRef,
+  FALLBACK_REASONS,
+  type SecretsProvider,
+  type CredentialRef,
+  type CredentialInfo,
+  type CredentialSource,
+  type CredentialUse,
+  type ResolvedCredential,
+  type ProviderCredentials,
+  type FallbackReason,
+} from "./secrets";
+export { envelopeSecrets, type EnvelopeSecretsOptions } from "./envelope-secrets";
+export { generateKeyringKey } from "./envelope";
+export {
+  validateAgentSpec,
+  ISSUE_CODES,
+  type Issue,
+  type IssueCode,
+  type ValidationFailure,
+  type ValidationResult,
+  type ScopeContext,
+} from "./validate";
+export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment";
+export {
+  defineHook,
+  HOOK_POINTS,
+  type Hook,
+  type HookInput,
+  type HookContextBase,
+  type HookContexts,
+  type HookResults,
+  type HookToolCall,
+  type BeforeToolDecision,
+  type BeforeCompactDecision,
+  type Compacted,
+  type HookPoint,
+  type TurnEnd,
+} from "./hook";
+export {
+  defineRetriever,
+  type Retriever,
+  type RetrieverContext,
+  type KnowledgeRef,
+  type KnowledgeDocument,
+  type Passage,
+} from "./retriever";
+export { defineSkill, type Skill, type SkillInvoker } from "./skill";
+export {
+  defineTool,
+  type Tool,
+  type ToolAnnotations,
+  type ToolContext,
+  type ToolContent,
+  type ToolResult,
+  type ToolPending,
+  type ToolOutcome,
+  type Connection,
+} from "./tool";
+export { evaluatePolicy, type PolicyEffect } from "./policy";
+export { truncateOutput, type OutputLimits, type Truncation } from "./spill";
+export { KarmiError, SpecInvalidError } from "./errors";
+export type { KarmiErrorCode } from "./errors";
+export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names";
+export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context";
+export { rawJsonSchema, type Schema, type JsonSchema } from "./schema";
+export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue";
+export { createKarmi, type Karmi, type KarmiOptions } from "./karmi";
+export type { Deployment } from "./deployment";
+export type {
+  Provider,
+  ProviderRequest,
+  ProviderEvent,
+  ProviderError,
+  ProviderErrorCode,
+  ProviderCallOptions,
+  CallAttribution,
+  ModelCapabilities,
+  Message,
+  ContentBlock,
+  StopReason,
+  Usage,
+  UsageCost,
+  ToolDefinition,
+  ProviderMcpServer,
+} from "./provider";
+export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay";
+export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch";
+export type { McpSnapshot, McpSnapshotInput, McpServerSnapshot, McpOAuthState } from "./mcp-registry";
+export {
+  clientDocument,
+  PRE_REGISTRATION_REQUIRED,
+  preRegistration,
+  preRegistrationForUrl,
+  OAUTH_CALLBACK_PATH,
+  CLIENT_DOCUMENT_PATH,
+  type McpClientIdentity,
+  type McpHolder,
+  type McpHolderRef,
+  type PreRegistration,
+} from "./mcp-auth";
+export type { OAuthRoutes } from "./mcp-oauth-routes";
+export type { McpAuthorizeRequest } from "./scope";
+export type { McpCatalog, McpEra, McpTool, McpReference } from "./mcp-catalog";
+export { parseMcpReference } from "./mcp-catalog";
+export { retry, type RetryOptions } from "./retry";
+export { resolveBindings, KARMI_BINDING_NAMES, type KarmiBindings, type BindingsResolver } from "./bindings";
+export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat";
+export type {
+  Scope,
+  ProviderTest,
+  ScopeState,
+  ScopeStatus,
+  ConfigRecord,
+  AgentRecord,
+  AgentSummary,
+  AgentVersion,
+  DestroyStatus,
+  DestroyPhase,
+  DestroyProgress,
+  ExternalCleanup,
+} from "./scope";
+export type {
+  Thread,
+  ThreadIdentity,
+  ThreadStatus,
+  ThreadBudget,
+  PendingApproval,
+  ThreadJobs,
+  SendOptions,
+  CompactOptions,
+  ThreadSummary,
+  ScheduleInput,
+} from "./thread";
+export { SCHEDULE_CAPS, type ScheduleSummary } from "./schedule";
+export type {
+  TurnInput,
+  Part,
+  ThreadEvent,
+  ThreadEventType,
+  Granularity,
+  PauseReason,
+  ResumeReason,
+  Budget,
+  ApprovalAnswer,
+  ApprovalSource,
+  CompactionTrigger,
+  CompactionStrategy,
+  StepCredentials,
+} from "./thread-events";
+export { evaluatePrompt, type PromptSections } from "./prompt";
+export type { MemoryView, MemoryNote } from "./memory";
+export { loadedToolNames, type Loaded } from "./loading";
+export { transcriptFromEvents, renderEvent } from "./transcript";
+export { DEFAULT_WINDOW, type ContextLimits } from "./compaction";
+export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects";
+
+export {
+  hydrateMedia,
+  prepareMedia,
+  mediaPlaceholder,
+  mediaKind,
+  type RequestMedia,
+  type EncodedMedia,
+} from "./media-request";
+export type { MediaWriter, ThreadUploads, MediaBody, MediaOptions } from "./media";
+
+export type { MediaUrlOptions } from "./media-url";
+
+export { ingestProviderEvent } from "./media-ingress";
+export type { ToolOutputResult } from "./tool";
+
+export type { Sandbox, SandboxRequest, SandboxResult, ScriptLimits, ScriptToolCall } from "./sandbox";
+export { CloudflareIsolateSandbox } from "./isolate-sandbox";
+
+export {
+  knowledgeIndexSchema,
+  KNOWLEDGE_INLINE_LIMIT,
+  KNOWLEDGE_BULK_THRESHOLD,
+  type Knowledge,
+  type KnowledgeIndex,
+  type KnowledgeIngestOptions,
+  type KnowledgeJob,
+  type KnowledgeChunk,
+} from "./knowledge";
+export { fts5Retriever, type RetrieverCtx } from "./retriever";
+
+export {
+  defineVectorRetriever,
+  vectorRetriever,
+  hybridRetriever,
+  type VectorRetrieverOptions,
+} from "./vector-retriever";
+export { workersAiEmbedder } from "./embedder";
+export {
+  type Embedder,
+  type EmbeddingIndex,
+  type VectorStore,
+  type VectorRow,
+  type VectorQuery,
+  type VectorHit,
+} from "./vector-store";
+
+export { VectorizeStore } from "./vectorize-store";
+
+export { checkVectorizeIndex } from "./vector-doctor";
+
+export {
+  runChecks,
+  decodeWranglerConfig,
+  decodeDoctorManifest,
+  formatFindings,
+  hasFailure,
+  type CheckStatus,
+  type Finding,
+  type DoctorInput,
+  type DoctorManifest,
+  type WranglerConfig,
+} from "./doctor";
+export { CloudflareContainerSandbox } from "./container-sandbox";
+export { KarmiSandbox, ContainerProxy } from "./cloudflare-container";
+export type { ContainerDriver, ContainerHost, ContainerLimits, ContainerRun } from "./container-types";
+
+export {
+  ThreadProtocolError,
+  decodeTurnRequest,
+  decodeApprovalAnswer,
+  isGranularity,
+  parseJsonText,
+  type ClientApprovalAnswer,
+  type SocketFrame,
+  type ServerFrame,
+  type TurnRequest,
+} from "./thread-protocol";
